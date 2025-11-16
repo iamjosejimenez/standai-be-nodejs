@@ -231,10 +231,12 @@ async function getLatestAssistantMessageText(threadId) {
   throw new Error("No assistant response was found for this thread");
 }
 
-app.use((error, req, res, _next) => {
+// eslint-disable-next-line no-unused-vars
+app.use((error, _req, res, _next) => {
   console.error("Unhandled error:", error);
   res.status(500).json({
     error: "Internal Server Error",
+    msg: error?.message ?? String(error),
   });
 });
 

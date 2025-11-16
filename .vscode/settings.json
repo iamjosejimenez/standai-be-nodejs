@@ -12,7 +12,6 @@
   ],
 
   "eslint.format.enable": true,
-
   // Opcional pero recomendable: desactivar Prettier como formateador directo
   "prettier.enable": false
 }
