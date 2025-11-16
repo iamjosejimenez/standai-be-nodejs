@@ -13,24 +13,27 @@ loadEnv();
 const settings = {
   projectEndpoint: process.env.PROJECT_ENDPOINT ?? "project_endpoint",
   agentId: process.env.AGENT_ID ?? "agent_id",
-  feedbackAgentId: process.env.FEEDBACK_AGENT_ID ?? process.env.AGENT_ID ?? "agent_id",
+  feedbackAgentId:
+    process.env.FEEDBACK_AGENT_ID ?? process.env.AGENT_ID ?? "agent_id",
   port: Number(process.env.PORT ?? 8000),
-  corsOrigins: process.env.CORS_ORIGINS ?? "*"
+  corsOrigins: process.env.CORS_ORIGINS ?? "*",
 };
 
 const credential = new DefaultAzureCredential();
 const projectClient = new AIProjectClient(settings.projectEndpoint, credential);
 
-
 let tracer;
 const telemetrySetup = (async () => {
   try {
-    const connectionString = await projectClient.telemetry.getApplicationInsightsConnectionString();
+    const connectionString =
+      await projectClient.telemetry.getApplicationInsightsConnectionString();
     if (connectionString) {
-      useAzureMonitor({ azureMonitorExporterOptions: { connectionString }});
+      useAzureMonitor({ azureMonitorExporterOptions: { connectionString } });
     }
     registerInstrumentations({
-      instrumentations: [new OpenAIInstrumentation({ captureMessageContent: true })]
+      instrumentations: [
+        new OpenAIInstrumentation({ captureMessageContent: true }),
+      ],
     });
 
     tracer = trace.getTracer("joke-api");
@@ -51,117 +54,125 @@ const corsOrigins =
 app.use(
   cors({
     origin: corsOrigins,
-    credentials: true
-  })
+    credentials: true,
+  }),
 );
 
 function withSpan(name, handler) {
   return async (req, res, next) => {
-    await tracer.startActiveSpan(name, { kind: SpanKind.SERVER }, async (span) => {
-      try {
-        await handler(req, res, next, span);
-      } catch (error) {
-        span.setStatus({
-          code: SpanStatusCode.ERROR,
-          message: error?.message ?? String(error)
-        });
-        span.recordException(error);
-        next(error);
-      } finally {
-        span.end();
-      }
-    });
+    await tracer.startActiveSpan(
+      name,
+      { kind: SpanKind.SERVER },
+      async (span) => {
+        try {
+          await handler(req, res, next, span);
+        } catch (error) {
+          span.setStatus({
+            code: SpanStatusCode.ERROR,
+            message: error?.message ?? String(error),
+          });
+          span.recordException(error);
+          next(error);
+        } finally {
+          span.end();
+        }
+      },
+    );
   };
 }
 
-app.get("/joke", withSpan("joke.run", async (req, res, next, span) => {
-  try {
-    const systemPrompt = "You are a standup comedian, return back only one joke. The user will either like or dislike the joke"
-    const agent = await projectClient.agents.getAgent(settings.agentId);
-    const thread = await projectClient.agents.threads.create();
-    
-    span.setAttribute("gen_ai.system", "azure_ai_projects");
-    span.setAttribute("gen_ai.provider.name", "azure_ai_projects_agents");
-    span.setAttribute("gen_ai.thread.id", thread.id);
-    span.setAttribute("gen_ai.agent.id", agent.id);;
-    
-    span.addEvent("gen_ai.system.message", {
-      "gen_ai.event.content": JSON.stringify({
-        message: systemPrompt,
-        role: "system"
-      }),
-      "gen_ai.thread.id": thread.id
-    });
+app.get(
+  "/joke",
+  withSpan("joke.run", async (req, res, next, span) => {
+    try {
+      const systemPrompt =
+        "You are a standup comedian, return back only one joke. The user will either like or dislike the joke";
+      const agent = await projectClient.agents.getAgent(settings.agentId);
+      const thread = await projectClient.agents.threads.create();
 
-    await projectClient.agents.messages.create(
-      thread.id,
-      "assistant",
-      systemPrompt
-    );
+      span.setAttribute("gen_ai.system", "azure_ai_projects");
+      span.setAttribute("gen_ai.provider.name", "azure_ai_projects_agents");
+      span.setAttribute("gen_ai.thread.id", thread.id);
+      span.setAttribute("gen_ai.agent.id", agent.id);
 
-    const runPoller = projectClient.agents.runs.createAndPoll(
-      thread.id,
-      agent.id
-    );
-    const run = await runPoller.pollUntilDone();
-
-    if (run.id) {
-      span.setAttribute("gen_ai.thread.run.id", run.id);
-      span.setAttribute("gen_ai.response.id", `${thread.id}/${run.id}`);
-    }
-
-    const usage = run.usage;
-    const inputTokens = usage.inputTokens ?? usage.input_tokens;
-    const outputTokens = usage.outputTokens ?? usage.output_tokens;
-
-    if (inputTokens != null) {
-      span.setAttribute("gen_ai.usage.input_tokens", inputTokens);
-    }
-    if (outputTokens != null) {
-      span.setAttribute("gen_ai.usage.output_tokens", outputTokens);
-    }
-
-    if (run.status === "failed") {
-      console.error("Run failed", run.lastError);
-      return res.status(500).json({
-        error: "The agent run failed",
-        details: run.lastError
+      span.addEvent("gen_ai.system.message", {
+        "gen_ai.event.content": JSON.stringify({
+          message: systemPrompt,
+          role: "system",
+        }),
+        "gen_ai.thread.id": thread.id,
       });
-    }
 
-    const messageText = await getLatestAssistantMessageText(thread.id);
+      await projectClient.agents.messages.create(
+        thread.id,
+        "assistant",
+        systemPrompt,
+      );
 
-    span.addEvent("gen_ai.choice", {
-      "gen_ai.event.content": JSON.stringify({
+      const runPoller = projectClient.agents.runs.createAndPoll(
+        thread.id,
+        agent.id,
+      );
+      const run = await runPoller.pollUntilDone();
+
+      if (run.id) {
+        span.setAttribute("gen_ai.thread.run.id", run.id);
+        span.setAttribute("gen_ai.response.id", `${thread.id}/${run.id}`);
+      }
+
+      const usage = run.usage;
+      const inputTokens = usage.inputTokens ?? usage.input_tokens;
+      const outputTokens = usage.outputTokens ?? usage.output_tokens;
+
+      if (inputTokens != null) {
+        span.setAttribute("gen_ai.usage.input_tokens", inputTokens);
+      }
+      if (outputTokens != null) {
+        span.setAttribute("gen_ai.usage.output_tokens", outputTokens);
+      }
+
+      if (run.status === "failed") {
+        console.error("Run failed", run.lastError);
+        return res.status(500).json({
+          error: "The agent run failed",
+          details: run.lastError,
+        });
+      }
+
+      const messageText = await getLatestAssistantMessageText(thread.id);
+
+      span.addEvent("gen_ai.choice", {
+        "gen_ai.event.content": JSON.stringify({
+          message: messageText,
+          role: "assistant",
+        }),
+        "gen_ai.thread.id": thread.id,
+        "gen_ai.thread.run.id": run.id ?? "",
+        "gen_ai.response.id": `${thread.id}/${run.id ?? ""}`,
+      });
+
+      span.setStatus({ code: SpanStatusCode.OK });
+
+      res.json({
         message: messageText,
-        role: "assistant"
-      }),
-      "gen_ai.thread.id": thread.id,
-      "gen_ai.thread.run.id": run.id ?? "",
-      "gen_ai.response.id": `${thread.id}/${run.id ?? ""}`
-    });
-
-    span.setStatus({ code: SpanStatusCode.OK });
-
-    res.json({
-      message: messageText,
-      threadId: thread.id
-    });
-  } catch (error) {
-    span.setStatus({
-      code: SpanStatusCode.ERROR,
-      message: error?.message ?? "Unhandled error in /joke"
-    });
-    next(error);
-  }
-}));
+        threadId: thread.id,
+      });
+    } catch (error) {
+      span.setStatus({
+        code: SpanStatusCode.ERROR,
+        message: error?.message ?? "Unhandled error in /joke",
+      });
+      next(error);
+    }
+  }),
+);
 
 app.get("/feedback", async (req, res, next) => {
   const { reaction, threadId } = req.query;
 
   if (!reaction || !threadId) {
     return res.status(400).json({
-      error: "Both 'reaction' and 'threadId' query params are required"
+      error: "Both 'reaction' and 'threadId' query params are required",
     });
   }
 
@@ -169,19 +180,22 @@ app.get("/feedback", async (req, res, next) => {
     await projectClient.agents.messages.create(
       threadId,
       "assistant",
-      `The result of the joke was: ${reaction}, return another joke based on this information`
+      `The result of the joke was: ${reaction}, return another joke based on this information`,
     );
 
     const agent = await projectClient.agents.getAgent(settings.feedbackAgentId);
 
-    const runPoller = projectClient.agents.runs.createAndPoll(threadId, agent.id);
+    const runPoller = projectClient.agents.runs.createAndPoll(
+      threadId,
+      agent.id,
+    );
     const run = await runPoller.pollUntilDone();
 
     if (run.status === "failed") {
       console.error("Run failed", run.lastError);
       return res.status(500).json({
         error: "The agent run failed",
-        details: run.lastError
+        details: run.lastError,
       });
     }
 
@@ -189,7 +203,7 @@ app.get("/feedback", async (req, res, next) => {
 
     res.json({
       message: messageText,
-      threadId
+      threadId,
     });
   } catch (error) {
     next(error);
@@ -199,7 +213,7 @@ app.get("/feedback", async (req, res, next) => {
 async function getLatestAssistantMessageText(threadId) {
   const messages = projectClient.agents.messages.list(threadId, {
     order: "desc",
-    limit: 20
+    limit: 20,
   });
 
   for await (const message of messages) {
@@ -220,7 +234,7 @@ async function getLatestAssistantMessageText(threadId) {
 app.use((error, req, res, _next) => {
   console.error("Unhandled error:", error);
   res.status(500).json({
-    error: "Internal Server Error"
+    error: "Internal Server Error",
   });
 });
 

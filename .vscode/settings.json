@@ -1,0 +1,18 @@
+{
+  // 👉 Usamos ESLint como formateador principal
+  "editor.formatOnSave": true,
+  "editor.defaultFormatter": "dbaeumer.vscode-eslint",
+
+  // Aseguramos que ESLint se aplique a JS/TS
+  "eslint.validate": [
+    "javascript",
+    "javascriptreact",
+    "typescript",
+    "typescriptreact"
+  ],
+
+  "eslint.format.enable": true,
+
+  // Opcional pero recomendable: desactivar Prettier como formateador directo
+  "prettier.enable": false
+}
